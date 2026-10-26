@@ -2,12 +2,8 @@
 
 **Point it at a pile of articles and ask what happened, who said it first, and what the evidence is.**
 
-| | |
+| **Live demo** | [https://YOUR-APP-URL.streamlit.app](https://YOUR-APP-URL.streamlit.app) *(replace after deploying)* |
 |---|---|
- **Live demo** | [https://YOUR-APP-URL.streamlit.app](https://YOUR-APP-URL.streamlit.app) *(replace after deploying)* 
-
-
-![Ask tab](docs/screenshot-ask.png)
 
 ## Example (real output on the demo corpus)
 
