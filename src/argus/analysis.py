@@ -1,3 +1,4 @@
+import os
 import re
 
 import numpy as np
@@ -104,8 +105,6 @@ def investigate(question, claims, vectors, engine, model, k=10):
     top.sort(key=lambda c: c["date"] or UNDATED)  # oldest first, so the story reads in order
     if model is None:  # demo mode: no language model, return the retrieved evidence only
         return None, top
-    import ollama
-
     items = "\n".join(
         f'[{n}] {c["date"][:10]}, published by {c["source"]}\n    claim: {c["claim"]}\n    original sentence: "{c["evidence"]}"'
         for n, c in enumerate(top, 1)
@@ -122,5 +121,17 @@ Items:
 {items}
 
 Question: {question}"""
+    if model.startswith("gemini:"):  # hosted option: Google Gemini over REST, key read from GEMINI_API_KEY
+        import requests
+
+        reply = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model[7:]}:generateContent",
+            headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]}, timeout=60,
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+        )
+        reply.raise_for_status()
+        return reply.json()["candidates"][0]["content"]["parts"][0]["text"], top
+    import ollama
+
     reply = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}], options={"temperature": 0})
     return reply["message"]["content"], top
