@@ -49,6 +49,17 @@ def setup():
     return claims, engine, vectors, narratives(claims, vectors)
 
 
+def answer_model():
+    """Local Ollama model when running locally; Gemini on the hosted demo if a key is set in secrets; else None."""
+    if not DEMO:
+        return os.getenv("ARGUS_MODEL", "llama3.2:3b")
+    try:
+        os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
+        return "gemini:" + st.secrets.get("GEMINI_MODEL", "gemini-3.5-flash")
+    except Exception:  # no secrets configured: evidence-only mode
+        return None
+
+
 claims, engine, vectors, story = setup()
 st.caption(f"{len(claims)} claims from {len({c['doc'] for c in claims})} documents")
 
@@ -65,7 +76,7 @@ with ask_tab:
     if st.button("Investigate") and question:
         try:
             with st.spinner("Reading the evidence..."):
-                answer, evidence = investigate(question, claims, vectors, engine, None if DEMO else os.getenv("ARGUS_MODEL", "llama3.2:3b"))
+                answer, evidence = investigate(question, claims, vectors, engine, answer_model())
         except Exception as exc:
             st.error(f"Could not reach the language model: {exc}")
             st.stop()
