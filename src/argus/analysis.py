@@ -91,8 +91,6 @@ def contradictions(claims, vectors, nli, similarity=0.6, max_pairs=300, figures_
 
 def investigate(question, claims, vectors, engine, model, k=10):
     """Answer a question from the most relevant claims only. Returns (answer, evidence claims)."""
-    import ollama
-
     pool = [i for i, c in enumerate(claims) if not c["repost"]]  # reposts add nothing new
     scores = vectors[pool] @ engine.encode([question])[0]
     top, seen = [], set()
@@ -104,6 +102,10 @@ def investigate(question, claims, vectors, engine, model, k=10):
         if len(top) == k:
             break
     top.sort(key=lambda c: c["date"] or UNDATED)  # oldest first, so the story reads in order
+    if model is None:  # demo mode: no language model, return the retrieved evidence only
+        return None, top
+    import ollama
+
     items = "\n".join(
         f'[{n}] {c["date"][:10]}, published by {c["source"]}\n    claim: {c["claim"]}\n    original sentence: "{c["evidence"]}"'
         for n, c in enumerate(top, 1)
