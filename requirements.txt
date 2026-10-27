@@ -1,8 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch
 transformers
 sentence-transformers
-PyMuPDF
-beautifulsoup4
+scikit-learn
 numpy
-streamlit
+pymupdf
+beautifulsoup4
+requests
+pydantic
 ollama
+streamlit
+pytest
