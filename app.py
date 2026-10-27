@@ -69,7 +69,9 @@ def get_pipeline():
     return ArgusPipeline(embedding_engine=engine)
 
 
-ask_tab, narrative_tab, disagree_tab, add_tab = st.tabs(["Ask", "Narratives and sources", "Possible disagreements", "Add documents"])
+tabs = st.tabs(["Ask", "Narratives and sources", "Possible disagreements"] + ([] if DEMO else ["Add documents"]))
+ask_tab, narrative_tab, disagree_tab = tabs[:3]
+add_tab = None if DEMO else tabs[3]  # uploads only exist in the local app
 
 with ask_tab:
     question = st.text_input("Ask about the corpus", "Did independent testers reproduce the benchmark results?")
@@ -112,20 +114,10 @@ with disagree_tab:
         for r in found:
             st.markdown(f"**{r['score']:.2f}**  \n" + "  \n".join(f"{c['source']} ({c['date'][:10] or 'undated'}): {c['claim']}" for c in (r["older"], r["newer"])))
 
+if DEMO:
+    st.stop()
 with add_tab:
     st.caption("Add your own articles. They are read, split into claims by the configured model, and added to the corpus.")
-    if DEMO:
-        st.markdown("""**Analysing your own documents runs locally**, because it needs a language model and a private database.
-
-```
-git clone https://github.com/neural-shubh/ARGUS && cd ARGUS
-pip install -r requirements.txt
-ollama pull qwen2.5:7b
-streamlit run app.py
-```
-
-Then use this tab to upload files or paste URLs; see the README for details.""")
-        st.stop()
     if "added" in st.session_state:
         st.success(st.session_state.pop("added"))
     files = st.file_uploader("Upload .txt, .html or .pdf files", type=["txt", "html", "htm", "pdf"], accept_multiple_files=True)
