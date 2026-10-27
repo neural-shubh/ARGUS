@@ -14,10 +14,15 @@ from argus.storage.database import ArgusDatabase
 st.set_page_config(page_title="ARGUS", layout="wide")
 st.title("ARGUS: narrative and source investigation")
 
+MAIN_DB, DEMO_DB = Path("data/database/argus.db"), Path("data/demo/argus_demo.db")
+DEMO = not MAIN_DB.exists()  # hosted copy: no local database, so use the bundled demo corpus
+if DEMO:
+    st.info("Demo mode: a bundled corpus about the Reflection 70B dispute. The language model and uploads are off here; run ARGUS locally to use them.")
+
 
 @st.cache_resource
 def setup():
-    claims = load_claims(ArgusDatabase())
+    claims = load_claims(ArgusDatabase(DEMO_DB if DEMO else MAIN_DB))
     engine = EmbeddingEngine()
     vectors = engine.encode([c["claim"] for c in claims])
     return claims, engine, vectors, narratives(claims, vectors)
@@ -39,11 +44,11 @@ with ask_tab:
     if st.button("Investigate") and question:
         try:
             with st.spinner("Reading the evidence..."):
-                answer, evidence = investigate(question, claims, vectors, engine, os.getenv("ARGUS_MODEL", "llama3.2:3b"))
+                answer, evidence = investigate(question, claims, vectors, engine, None if DEMO else os.getenv("ARGUS_MODEL", "llama3.2:3b"))
         except Exception as exc:
             st.error(f"Could not reach the language model: {exc}")
             st.stop()
-        st.write(answer)
+        st.write(answer or "Demo mode: the language model is off, so this is the evidence ARGUS retrieved for your question:")
         for n, c in enumerate(evidence, 1):
             st.markdown(f'**[{n}]** {c["source"]} ({c["date"][:10] or "undated"}): "{c["evidence"]}"')
 
@@ -57,7 +62,9 @@ with narrative_tab:
 
 with disagree_tab:
     st.caption("Experimental: compares claims that quote figures or dates. It can miss disagreements and flag false ones.")
-    if st.button("Find possible disagreements"):
+    if DEMO:
+        st.info("Disabled in the hosted demo (it loads an extra model). Run ARGUS locally to try it.")
+    elif st.button("Find possible disagreements"):
         from sentence_transformers import CrossEncoder
 
         found = [r for r in contradictions(claims, vectors, CrossEncoder("cross-encoder/nli-deberta-v3-small")) if r["score"] >= 0.8]
@@ -67,6 +74,9 @@ with disagree_tab:
 
 with add_tab:
     st.caption("Add your own articles. They are read, split into claims by the configured model, and added to the corpus.")
+    if DEMO:
+        st.info("Uploads are disabled in the hosted demo. Run ARGUS locally to analyse your own documents.")
+        st.stop()
     if "added" in st.session_state:
         st.success(st.session_state.pop("added"))
     files = st.file_uploader("Upload .txt, .html or .pdf files", type=["txt", "html", "htm", "pdf"], accept_multiple_files=True)
