@@ -38,8 +38,7 @@ else:
     st.error(f"No claims database found. Expected data/demo/argus_demo.db (currently: {size}). "
              "Run scripts/extract_claims.py locally, or add the demo database to the repo.")
     st.stop()
-if DEMO:
-    st.info("Demo mode: a bundled corpus about the Reflection 70B dispute. The language model and uploads are off here; run ARGUS locally to use them.")
+
 
 
 @st.cache_resource
