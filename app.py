@@ -1,4 +1,4 @@
-import os, sys
+import os, sqlite3, sys
 from pathlib import Path
 
 import streamlit as st
@@ -14,8 +14,30 @@ from argus.storage.database import ArgusDatabase
 st.set_page_config(page_title="ARGUS", layout="wide")
 st.title("ARGUS: narrative and source investigation")
 
-MAIN_DB, DEMO_DB = Path("data/database/argus.db"), Path("data/demo/argus_demo.db")
-DEMO = not MAIN_DB.exists()  # hosted copy: no local database, so use the bundled demo corpus
+ROOT = Path(__file__).parent
+MAIN_DB, DEMO_DB = ROOT / "data/database/argus.db", ROOT / "data/demo/argus_demo.db"
+
+
+def has_claims(path):
+    """True if the database file exists and holds claims (opened read-only, so nothing is created)."""
+    if not path.exists():
+        return False
+    try:
+        with sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True) as conn:
+            return conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0] > 0
+    except sqlite3.Error:
+        return False
+
+
+if has_claims(MAIN_DB):
+    DEMO = False
+elif has_claims(DEMO_DB):
+    DEMO = True  # hosted copy: use the bundled demo corpus
+else:
+    size = DEMO_DB.stat().st_size if DEMO_DB.exists() else "missing"
+    st.error(f"No claims database found. Expected data/demo/argus_demo.db (currently: {size}). "
+             "Run scripts/extract_claims.py locally, or add the demo database to the repo.")
+    st.stop()
 if DEMO:
     st.info("Demo mode: a bundled corpus about the Reflection 70B dispute. The language model and uploads are off here; run ARGUS locally to use them.")
 
