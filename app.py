@@ -1,4 +1,4 @@
-import os, sqlite3, sys
+import json, os, sqlite3, sys
 from pathlib import Path
 
 import streamlit as st
@@ -94,8 +94,16 @@ with narrative_tab:
 
 with disagree_tab:
     st.caption("Experimental: compares claims that quote figures or dates. It can miss disagreements and flag false ones.")
+    saved = ROOT / "data/demo/disagreements.json"
     if DEMO:
-        st.info("Disabled in the hosted demo (it loads an extra model). Run ARGUS locally to try it.")
+        st.caption("Precomputed on this corpus.")
+        results = json.loads(saved.read_text(encoding="utf-8")) if saved.exists() else None
+        if results is None:
+            st.info("No saved results in this copy of the demo.")
+        elif not results:
+            st.info("No confident disagreements were found on this corpus. Its disputes are mostly qualitative, with no shared figures to compare.")
+        for r in results or []:
+            st.markdown(f"**{r['score']:.2f}**  \n" + "  \n".join(f"{c['source']} ({c['date'][:10] or 'undated'}): {c['claim']}" for c in (r["older"], r["newer"])))
     elif st.button("Find possible disagreements"):
         from sentence_transformers import CrossEncoder
 
@@ -107,7 +115,16 @@ with disagree_tab:
 with add_tab:
     st.caption("Add your own articles. They are read, split into claims by the configured model, and added to the corpus.")
     if DEMO:
-        st.info("Uploads are disabled in the hosted demo. Run ARGUS locally to analyse your own documents.")
+        st.markdown("""**Analysing your own documents runs locally**, because it needs a language model and a private database.
+
+```
+git clone https://github.com/neural-shubh/ARGUS && cd ARGUS
+pip install -r requirements.txt
+ollama pull qwen2.5:7b
+streamlit run app.py
+```
+
+Then use this tab to upload files or paste URLs; see the README for details.""")
         st.stop()
     if "added" in st.session_state:
         st.success(st.session_state.pop("added"))
