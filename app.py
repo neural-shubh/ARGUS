@@ -5,7 +5,15 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 from argus.analysis import contradictions, investigate, load_claims, narratives
-from argus.extraction import add_documents
+try:
+    from argus.extraction import add_documents
+except ImportError:  # the deployed files are out of date: say which one, instead of a redacted crash
+    import argus.extraction as _ex
+
+    st.error(f"Out-of-date file on the server: {_ex.__file__} ({Path(_ex.__file__).stat().st_size} bytes) "
+             f"defines {[n for n in dir(_ex) if not n.startswith('_')]}. The current file is about "
+             f"2606 bytes and defines extract_pending and add_documents.")
+    st.stop()
 from argus.ingestion.fetch import fetch_url, is_public_url
 from argus.nlp.embeddings import EmbeddingEngine
 from argus.pipeline import ArgusPipeline
