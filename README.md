@@ -2,8 +2,7 @@
 
 **Point it at a pile of articles and ask what happened, who said it first, and what the evidence is.**
 
-| **Live demo** | [[https://YOUR-APP-URL.streamlit.app](https://neural-shubh-argus-app-xxvytl.streamlit.app/)] |
-|---|---|
+**Live demo:** [neural-shubh-argus-app-xxvytl.streamlit.app](https://neural-shubh-argus-app-xxvytl.streamlit.app/)
 
 ## Example (real output on the demo corpus)
 
