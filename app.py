@@ -1,10 +1,10 @@
-import json, os, sqlite3, sys, tempfile, uuid
+import os, sqlite3, sys, tempfile, uuid
 from pathlib import Path
 
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from argus.analysis import contradictions, investigate, load_claims, narratives
+from argus.analysis import investigate, load_claims, narratives
 try:
     from argus.extraction import add_documents
 except ImportError:  # the deployed files are out of date: say which one, instead of a redacted crash
@@ -97,7 +97,7 @@ engine = get_engine()
 claims, vectors, story = load_corpus(str(db))
 st.caption(f"{len(claims)} claims from {len({c['doc'] for c in claims})} documents")
 
-ask_tab, narrative_tab, disagree_tab, add_tab = st.tabs(["Ask", "Narratives and sources", "Possible disagreements", "Add documents"])
+ask_tab, narrative_tab, add_tab = st.tabs(["Ask", "Narratives and sources", "Add documents"])
 
 with ask_tab:
     question = st.text_input("Ask about the corpus", "Did independent testers reproduce the benchmark results?")
@@ -119,28 +119,6 @@ with narrative_tab:
             for it in n["claims"]:
                 repeats = f"; repeated by {', '.join(it['repeated_by'])}" if it["repeated_by"] else ""
                 st.markdown(f"**{it['date'] or 'undated'}**: {it['claim']}  \n*first reported by {it['origin']}{repeats}*")
-
-with disagree_tab:
-    st.caption("Experimental: compares claims that quote figures or dates. It can miss disagreements and flag false ones.")
-    saved = ROOT / "data/demo/disagreements.json"
-    if DEMO and own:
-        st.info("Not available for your own documents on the hosted demo.")
-    elif DEMO:
-        st.caption("Precomputed on this corpus.")
-        results = json.loads(saved.read_text(encoding="utf-8")) if saved.exists() else None
-        if results is None:
-            st.info("No saved results in this copy of the demo.")
-        elif not results:
-            st.info("No confident disagreements were found on this corpus. Its disputes are mostly qualitative, with no shared figures to compare.")
-        for r in results or []:
-            st.markdown(f"**{r['score']:.2f}**  \n" + "  \n".join(f"{c['source']} ({c['date'][:10] or 'undated'}): {c['claim']}" for c in (r["older"], r["newer"])))
-    elif st.button("Find possible disagreements"):
-        from sentence_transformers import CrossEncoder
-
-        found = [r for r in contradictions(claims, vectors, CrossEncoder("cross-encoder/nli-deberta-v3-small")) if r["score"] >= 0.8]
-        st.info("No confident disagreements found.") if not found else None
-        for r in found:
-            st.markdown(f"**{r['score']:.2f}**  \n" + "  \n".join(f"{c['source']} ({c['date'][:10] or 'undated'}): {c['claim']}" for c in (r["older"], r["newer"])))
 
 with add_tab:
     st.caption("Add your own articles. They are read, split into claims by the configured model, and analysed in the other tabs.")
