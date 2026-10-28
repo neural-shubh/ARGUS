@@ -48,16 +48,45 @@ def resolve_dates(claim: str, published: str | None) -> str:
     return re.sub(r"\bnext month\b", f"in {next_month:%B %Y}", claim)
 
 
+SCHEMA_HINT = '\n\nReturn only JSON like {"claims": [{"claim": "...", "attribution": "...", "evidence": "..."}]}'
+
+
+def _generate(prompt: str, temperature: float) -> str:
+    """The model's JSON reply as text: Gemini when ARGUS_MODEL starts with 'gemini:', otherwise Ollama."""
+    model = os.getenv("ARGUS_MODEL", MODEL)
+    if model.startswith("gemini:"):
+        import time
+
+        import requests
+
+        for attempt in range(4):
+            reply = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model[7:]}:generateContent",
+                headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]}, timeout=60,
+                json={"contents": [{"parts": [{"text": prompt + SCHEMA_HINT}]}],
+                      "generationConfig": {"temperature": temperature, "responseMimeType": "application/json"}},
+            )
+            if reply.status_code == 429:  # free-tier rate limit: wait and retry
+                time.sleep(8 * (attempt + 1))
+                continue
+            reply.raise_for_status()
+            return reply.json()["candidates"][0]["content"]["parts"][0]["text"]
+        raise RuntimeError("Gemini rate limit reached; try again in a minute.")
+    reply = ollama.chat(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        format=Claims.model_json_schema(),  # decoding is constrained, so the JSON is always valid
+        options={"temperature": temperature},
+    )
+    return reply["message"]["content"]
+
+
 def extract_claims(text: str, source: str = "an unknown source", published: str | None = None) -> list[Claim]:
     flat = " ".join(text.split())  # ignore line breaks when checking evidence
     for temperature in (0, 0.4):  # if the model returns nothing usable, retry once with some variation
-        reply = ollama.chat(
-            model=MODEL,
-            messages=[{"role": "user", "content": PROMPT.format(source=source) + text}],
-            format=Claims.model_json_schema(),  # decoding is constrained, so the JSON is always valid
-            options={"temperature": temperature},
-        )
-        claims = Claims.model_validate_json(reply["message"]["content"]).claims
+        raw = _generate(PROMPT.format(source=source) + text, temperature)
+        body = re.search(r"\{.*\}", raw, re.DOTALL)
+        claims = Claims.model_validate_json(body.group(0) if body else '{"claims": []}').claims
         kept = [c for c in claims if " ".join(c.evidence.split()) in flat]
         if len(kept) < len(claims):
             print(f"  dropped {len(claims) - len(kept)} claim(s) with ungrounded evidence")
