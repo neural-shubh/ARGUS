@@ -1,14 +1,14 @@
-import json, os, sqlite3, sys
+import json, os, sqlite3, sys, tempfile, uuid
 from pathlib import Path
 
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from argus.extraction import extract_pending
-from argus.ingestion.fetch import fetch_url
-from argus.pipeline import ArgusPipeline
 from argus.analysis import contradictions, investigate, load_claims, narratives
+from argus.extraction import add_documents
+from argus.ingestion.fetch import fetch_url, is_public_url
 from argus.nlp.embeddings import EmbeddingEngine
+from argus.pipeline import ArgusPipeline
 from argus.storage.database import ArgusDatabase
 
 st.set_page_config(page_title="ARGUS", layout="wide")
@@ -16,6 +16,7 @@ st.title("ARGUS: narrative and source investigation")
 
 ROOT = Path(__file__).parent
 MAIN_DB, DEMO_DB = ROOT / "data/database/argus.db", ROOT / "data/demo/argus_demo.db"
+MAX_DOCS, MAX_CHUNKS, MAX_BYTES = 3, 24, 2_000_000  # limits for the hosted demo
 
 
 def has_claims(path):
@@ -32,7 +33,7 @@ def has_claims(path):
 if has_claims(MAIN_DB):
     DEMO = False
 elif has_claims(DEMO_DB):
-    DEMO = True  # hosted copy: use the bundled demo corpus
+    DEMO = True  # hosted copy: bundled demo corpus, plus a private temporary database per visitor
 else:
     size = DEMO_DB.stat().st_size if DEMO_DB.exists() else "missing"
     st.error(f"No claims database found. Expected data/demo/argus_demo.db (currently: {size}). "
@@ -40,13 +41,26 @@ else:
     st.stop()
 
 
+class NoEntities:  # the hosted demo skips the heavy entity model
+    def extract_batch(self, texts, batch_size=16):
+        return [[] for _ in texts]
+
 
 @st.cache_resource
-def setup():
-    claims = load_claims(ArgusDatabase(DEMO_DB if DEMO else MAIN_DB))
-    engine = EmbeddingEngine()
-    vectors = engine.encode([c["claim"] for c in claims])
-    return claims, engine, vectors, narratives(claims, vectors)
+def get_engine():
+    return EmbeddingEngine()
+
+
+@st.cache_resource
+def load_corpus(db_path):
+    claims = load_claims(ArgusDatabase(Path(db_path)))
+    vectors = get_engine().encode([c["claim"] for c in claims])
+    return claims, vectors, narratives(claims, vectors)
+
+
+@st.cache_resource
+def get_pipeline():
+    return ArgusPipeline(embedding_engine=get_engine())
 
 
 def answer_model():
@@ -60,18 +74,22 @@ def answer_model():
         return None
 
 
-claims, engine, vectors, story = setup()
+if DEMO and "user_db" not in st.session_state:  # each hosted visitor gets a private temporary database
+    st.session_state["user_db"] = str(Path(tempfile.gettempdir()) / f"argus_{uuid.uuid4().hex[:8]}.db")
+USER_DB = Path(st.session_state["user_db"]) if DEMO else None
+
+db, own = (DEMO_DB if DEMO else MAIN_DB), False
+if DEMO and has_claims(USER_DB):
+    if st.session_state.pop("switch_to_own", False):
+        st.session_state["corpus"] = "My documents"
+    own = st.radio("Corpus", ["Reflection 70B demo", "My documents"], horizontal=True, key="corpus") == "My documents"
+    db = USER_DB if own else DEMO_DB
+
+engine = get_engine()
+claims, vectors, story = load_corpus(str(db))
 st.caption(f"{len(claims)} claims from {len({c['doc'] for c in claims})} documents")
 
-
-@st.cache_resource
-def get_pipeline():
-    return ArgusPipeline(embedding_engine=engine)
-
-
-tabs = st.tabs(["Ask", "Narratives and sources", "Possible disagreements"] + ([] if DEMO else ["Add documents"]))
-ask_tab, narrative_tab, disagree_tab = tabs[:3]
-add_tab = None if DEMO else tabs[3]  # uploads only exist in the local app
+ask_tab, narrative_tab, disagree_tab, add_tab = st.tabs(["Ask", "Narratives and sources", "Possible disagreements", "Add documents"])
 
 with ask_tab:
     question = st.text_input("Ask about the corpus", "Did independent testers reproduce the benchmark results?")
@@ -82,12 +100,12 @@ with ask_tab:
         except Exception as exc:
             st.error(f"Could not reach the language model: {exc}")
             st.stop()
-        st.write(answer or "Demo mode: the language model is off, so this is the evidence ARGUS retrieved for your question:")
+        st.write(answer or "The language model is off here, so this is the evidence ARGUS retrieved for your question:")
         for n, c in enumerate(evidence, 1):
             st.markdown(f'**[{n}]** {c["source"]} ({c["date"][:10] or "undated"}): "{c["evidence"]}"')
 
 with narrative_tab:
-    min_size = st.slider("Only narratives with at least this many claims", 1, 10, 2)
+    min_size = st.slider("Only narratives with at least this many claims", 1, 10, 2 if not own else 1)
     for n in (n for n in story if n["size"] >= min_size):
         with st.expander(f"{n['size']} claims: {n['claims'][0]['claim'][:100]}"):
             for it in n["claims"]:
@@ -97,7 +115,9 @@ with narrative_tab:
 with disagree_tab:
     st.caption("Experimental: compares claims that quote figures or dates. It can miss disagreements and flag false ones.")
     saved = ROOT / "data/demo/disagreements.json"
-    if DEMO:
+    if DEMO and own:
+        st.info("Not available for your own documents on the hosted demo.")
+    elif DEMO:
         st.caption("Precomputed on this corpus.")
         results = json.loads(saved.read_text(encoding="utf-8")) if saved.exists() else None
         if results is None:
@@ -114,34 +134,47 @@ with disagree_tab:
         for r in found:
             st.markdown(f"**{r['score']:.2f}**  \n" + "  \n".join(f"{c['source']} ({c['date'][:10] or 'undated'}): {c['claim']}" for c in (r["older"], r["newer"])))
 
-if DEMO:
-    st.stop()
 with add_tab:
-    st.caption("Add your own articles. They are read, split into claims by the configured model, and added to the corpus.")
+    st.caption("Add your own articles. They are read, split into claims by the configured model, and analysed in the other tabs.")
+    model = answer_model()
+    if model is None:
+        st.info("No language model is configured for this app, so documents cannot be analysed here.")
+        st.stop()
+    if DEMO:
+        st.caption(f"Hosted demo: up to {MAX_DOCS} documents of {MAX_BYTES // 1_000_000} MB each, private to this session. "
+                   "Only the first part of each document is analysed.")
     if "added" in st.session_state:
         st.success(st.session_state.pop("added"))
     files = st.file_uploader("Upload .txt, .html or .pdf files", type=["txt", "html", "htm", "pdf"], accept_multiple_files=True)
     urls = st.text_area("...or paste article URLs, one per line")
     if st.button("Add and analyse") and (files or urls.strip()):
-        raw = Path("data/raw")
+        target = USER_DB if DEMO else MAIN_DB
+        raw = Path(tempfile.mkdtemp()) if DEMO else Path("data/raw")
         raw.mkdir(parents=True, exist_ok=True)
         paths = []
         for f in files:
+            if DEMO and (len(paths) >= MAX_DOCS or f.size > MAX_BYTES):
+                st.warning(f"Skipped {f.name} (hosted demo limits).")
+                continue
             paths.append(raw / Path(f.name).name)
             paths[-1].write_bytes(f.getvalue())
         for url in (u.strip() for u in urls.splitlines() if u.strip().startswith("http")):
+            if DEMO and (len(paths) >= MAX_DOCS or not is_public_url(url)):
+                st.warning(f"Skipped {url} (hosted demo limits, or not a public address).")
+                continue
             try:
                 paths.append(fetch_url(url, raw))
             except Exception as exc:
                 st.warning(f"Could not fetch {url}: {exc}")
-        added = 0
-        for path in paths:
-            try:
-                added += get_pipeline().process_file(path)["status"] == "processed"
-            except Exception as exc:
-                st.warning(f"Could not read {path.name}: {exc}")
-        bar, failures = st.progress(0.0, "Extracting claims..."), []
-        extract_pending(ArgusDatabase(), lambda m, i, n: (bar.progress(i / n if n else 1.0), failures.append(m) if "failed" in m else None))
-        st.session_state["added"] = f"Added {added} document(s)." + (f" {len(failures)} chunk(s) failed (is the model running?); rerun to retry." if failures else "")
-        st.cache_resource.clear()
+        if DEMO:
+            os.environ["ARGUS_MODEL"] = model
+        bar, problems = st.progress(0.0, "Reading and extracting claims..."), []
+        pipeline = (ArgusPipeline(database=ArgusDatabase(target), entity_extractor=NoEntities(), embedding_engine=engine)
+                    if DEMO else get_pipeline())
+        added = add_documents(paths, ArgusDatabase(target), pipeline, lambda m, i, n: (
+            bar.progress(i / n if n else 1.0), problems.append(m) if ("failed" in m or "Could not" in m) else None),
+            MAX_CHUNKS if DEMO else None)
+        load_corpus.clear()
+        st.session_state["added"] = f"Added {added} document(s)." + (f" {len(problems)} problem(s): {problems[0][:150]}" if problems else "")
+        st.session_state["switch_to_own"] = DEMO
         st.rerun()
