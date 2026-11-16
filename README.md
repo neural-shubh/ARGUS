@@ -2,7 +2,7 @@
 
 **Point it at a pile of articles and ask what happened, who said it first, and what the evidence is.**
 
-**Live demo:** [ARGUS]([https://neural-shubh-argus-app-xxvytl.streamlit.app/](https://reliable-squirrel-29dc64.netlify.app])
+**Live demo:** [ARGUS](https://reliable-squirrel-29dc64.netlify.app)
 
 ## Example (real output on the demo corpus)
 
